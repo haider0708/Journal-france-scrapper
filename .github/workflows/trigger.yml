@@ -1,0 +1,29 @@
+# Scheduled external trigger for the Render service.
+# Render free can't run cron jobs, so GitHub Actions pings POST /scan daily.
+#
+# Configure two repository secrets (Settings > Secrets and variables > Actions):
+#   SERVICE_URL  -> your Render URL, e.g. https://legifrance-monitor.onrender.com
+#   CRON_SECRET  -> the value Render generated for CRON_SECRET
+#
+# The first request after idle wakes the service (~1 min cold start); the curl
+# retries cover that wake-up.
+
+name: Trigger Legifrance scan
+
+on:
+  schedule:
+    - cron: "30 7 * * *"   # 07:30 UTC daily (JO publishes in the morning, Paris time)
+  workflow_dispatch:        # allows manual runs from the Actions tab
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /scan
+        env:
+          SERVICE_URL: ${{ secrets.SERVICE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS --retry 5 --retry-all-errors --retry-delay 20 --max-time 120 \
+            -X POST "$SERVICE_URL/scan" \
+            -H "Authorization: Bearer $CRON_SECRET"

@@ -1,0 +1,13 @@
+# Secrets & local state
+.env
+state.json
+matches.jsonl
+legifrance_monitor.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/

@@ -1,0 +1,11 @@
+.env
+state.json
+matches.jsonl
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.git/
+tests/

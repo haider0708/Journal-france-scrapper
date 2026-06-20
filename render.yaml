@@ -1,0 +1,54 @@
+# Render Blueprint -- https://render.com/docs/blueprint-spec
+# Deploy: push this repo to GitHub, then in Render: New + > Blueprint > pick repo.
+#
+# IMPORTANT: Render's free filesystem is ephemeral, so state MUST live in an
+# external Postgres. Set DATABASE_URL to a free Postgres (e.g. Neon: neon.tech).
+# All `sync: false` vars are entered in the Render dashboard (never committed).
+
+services:
+  - type: web
+    name: legifrance-monitor
+    runtime: python
+    plan: free
+    region: frankfurt          # closest to legifrance.gouv.fr; change if you like
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+
+      # --- Legifrance / PISTE API (from piste.gouv.fr) ---
+      - key: PISTE_CLIENT_ID
+        sync: false
+      - key: PISTE_CLIENT_SECRET
+        sync: false
+      - key: PISTE_SANDBOX
+        value: "false"
+
+      # --- What to watch for ---
+      - key: SEARCH_NAMES
+        sync: false            # e.g. "Lobna Marsaoui;Autre Nom"
+      - key: LOOKBACK_EDITIONS
+        value: "15"
+      - key: REQUEST_DELAY_S
+        value: "0.3"
+
+      # --- Email alerts (Resend) ---
+      - key: EMAIL_ENABLED
+        value: "true"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: onboarding@resend.dev
+      - key: EMAIL_TO
+        sync: false
+
+      # --- State persistence (external Postgres -- e.g. Neon) ---
+      - key: DATABASE_URL
+        sync: false
+
+      # --- Security: secret required to call POST /scan ---
+      - key: CRON_SECRET
+        generateValue: true    # Render generates a random value; read it in the dashboard
