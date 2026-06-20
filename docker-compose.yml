@@ -1,0 +1,73 @@
+# Self-contained deployment: the app + PostgreSQL, both in Docker.
+#
+# On your VPS:
+#   git clone <repo> && cd <repo>
+#   cp .env.example .env        # fill in your secrets
+#   docker compose up -d --build
+#   docker compose logs -f app  # watch it work
+#
+# Postgres data persists in the named volume `pgdata` across restarts/rebuilds.
+# The app reaches the DB at host `db` (the service name) on the Docker network.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-legifrance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-legifrance}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-legifrance} -d ${POSTGRES_DB:-legifrance}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # DB connection is built from the POSTGRES_* values above.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-legifrance}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-legifrance}
+
+      # Legifrance / PISTE
+      PISTE_CLIENT_ID: ${PISTE_CLIENT_ID}
+      PISTE_CLIENT_SECRET: ${PISTE_CLIENT_SECRET}
+      PISTE_SANDBOX: ${PISTE_SANDBOX:-false}
+
+      # Search
+      SEARCH_NAMES: ${SEARCH_NAMES}
+      LOOKBACK_EDITIONS: ${LOOKBACK_EDITIONS:-15}
+      REQUEST_DELAY_S: ${REQUEST_DELAY_S:-0.3}
+
+      # Email (Resend)
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-true}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      EMAIL_FROM: ${EMAIL_FROM:-onboarding@resend.dev}
+      EMAIL_TO: ${EMAIL_TO}
+
+      # Scheduler (always-on host -> let the app schedule itself)
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      SCAN_INTERVAL_MINUTES: ${SCAN_INTERVAL_MINUTES:-720}
+      SCAN_ON_STARTUP: ${SCAN_ON_STARTUP:-true}
+
+      # Manual-trigger secret (optional if you rely on the internal scheduler)
+      CRON_SECRET: ${CRON_SECRET:-}
+
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  pgdata:

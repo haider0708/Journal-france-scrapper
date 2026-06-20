@@ -45,6 +45,11 @@ services:
       - key: EMAIL_TO
         sync: false
 
+      # --- Scheduling: Render spins down when idle, so disable the internal
+      #     scheduler and trigger via the GitHub Actions workflow instead. ---
+      - key: SCHEDULER_ENABLED
+        value: "false"
+
       # --- State persistence (external Postgres -- e.g. Neon) ---
       - key: DATABASE_URL
         sync: false

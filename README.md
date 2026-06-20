@@ -21,22 +21,29 @@ break when the website changes.
 ## Architecture
 
 ```
- GitHub Actions (cron)            Render free web service              External Postgres (Neon)
- ───────────────────              ───────────────────────              ────────────────────────
-  daily POST /scan  ───────────►  FastAPI                                processed_editions
-  (Bearer CRON_SECRET)            ├─ /healthz  /status                   match_log
-                                  └─ /scan → background thread:
-                                       PISTE API → match → Resend email
-                                                  │
-                                                  └── reads/writes state ──►
+        ┌─────────────────────── one Docker network ───────────────────────┐
+        │                                                                   │
+        │   app  (FastAPI + internal scheduler)         db  (PostgreSQL)    │
+        │   ├─ /healthz  /status                        processed_editions  │
+        │   ├─ POST /scan  (manual, token-protected)    match_log           │
+        │   └─ every N min → scan:                          ▲               │
+        │        PISTE API → match → Resend email           │ state         │
+        │                       └──────────── reads/writes ─┘               │
+        │                                              (volume: pgdata)     │
+        └───────────────────────────────────────────────────────────────────┘
 ```
 
-**Why this shape?** Render's free tier has an *ephemeral filesystem* (local files
-vanish on every restart/redeploy/spin-down) and *no free cron jobs or background
-workers*. So state lives in an external Postgres, and an external scheduler pings
-an HTTP endpoint. The endpoint returns immediately (`202`) and scans in a
-background thread, committing state per-edition so a spin-down mid-scan just
-resumes on the next trigger.
+Two deployment modes, same code:
+
+- **VPS / Docker (recommended):** `docker compose up` runs the app **and**
+  PostgreSQL together. The app's **internal scheduler** triggers scans itself —
+  no external cron. State persists in the `pgdata` volume.
+- **Render free:** the filesystem is ephemeral and there are no free cron jobs,
+  so set `SCHEDULER_ENABLED=false`, point `DATABASE_URL` at a managed Postgres
+  (e.g. Neon), and let the included GitHub Actions workflow `POST /scan` daily.
+
+Either way the scan runs in a background thread and commits state **per-edition**,
+so an interrupted run just resumes on the next trigger.
 
 ---
 
@@ -53,9 +60,10 @@ app/
   main.py          FastAPI app (/, /healthz, /status, /scan)
   cli.py           local runner:  python -m app.cli
 tests/             pytest suite (matching + storage)
-render.yaml        Render Blueprint (Infrastructure as Code)
-.github/workflows/trigger.yml   scheduled trigger
-Dockerfile         optional container build
+docker-compose.yml app + PostgreSQL, for VPS deployment
+Dockerfile         container image
+render.yaml        Render Blueprint (alternative host)
+.github/workflows/trigger.yml   scheduled trigger (Render mode)
 ```
 
 ---
@@ -81,7 +89,51 @@ curl localhost:8000/status
 
 ---
 
-## Deploy to Render (free)
+## Deploy on a VPS with Docker (recommended)
+
+Everything (app + PostgreSQL) runs in containers. Postgres data lives in a
+persistent volume, and the app schedules its own scans.
+
+### 1. Prerequisites
+- A free **PISTE** Client ID/Secret — [piste.gouv.fr](https://piste.gouv.fr), subscribe an app to *Légifrance*.
+- A free **Resend** API key — [resend.com](https://resend.com).
+- Docker + Docker Compose on the VPS.
+
+### 2. On the VPS
+```bash
+git clone https://github.com/haider0708/Journal-france-scrapper.git
+cd Journal-france-scrapper
+
+cp .env.example .env
+nano .env        # fill PISTE_*, SEARCH_NAMES, RESEND_API_KEY, EMAIL_TO,
+                 # and a strong POSTGRES_PASSWORD
+
+docker compose up -d --build
+docker compose logs -f app      # watch it authenticate, scan, and alert
+```
+
+That's it. The app:
+- creates its DB schema automatically on first boot,
+- backfills the last `LOOKBACK_EDITIONS` editions immediately (`SCAN_ON_STARTUP=true`),
+- then re-scans every `SCAN_INTERVAL_MINUTES` (default 720 = twice a day),
+- emails you on every match.
+
+### 3. Check / operate
+```bash
+curl localhost:8000/status                 # last run, stats, recent matches
+curl -X POST localhost:8000/scan \         # force a scan now
+  -H "Authorization: Bearer <CRON_SECRET>"
+docker compose down                        # stop (data kept in the volume)
+docker compose pull && docker compose up -d --build   # update after git pull
+```
+
+> The DB is only reachable inside the Docker network. Expose port 8000 only if
+> you need the API externally (put it behind a reverse proxy / firewall).
+> `/status` is unauthenticated — keep it internal or add a proxy auth layer.
+
+---
+
+## Deploy to Render (free) — alternative
 
 ### 1. Get the prerequisites (all free)
 - **PISTE** Client ID/Secret — [piste.gouv.fr](https://piste.gouv.fr), subscribe an app to *Légifrance*.

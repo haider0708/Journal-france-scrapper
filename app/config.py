@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # Shared secret required to call POST /scan (Bearer token or ?token=).
     cron_secret: str = ""
 
+    # -- Internal scheduler (for always-on hosts like a VPS/Docker) ---------
+    # When enabled, the app triggers its own scans on an interval -- no
+    # external cron needed. Disable on Render (use the GitHub Actions trigger).
+    scheduler_enabled: bool = True
+    scan_interval_minutes: int = 720  # twice a day
+    scan_on_startup: bool = True
+
     # -- Misc ---------------------------------------------------------------
     log_level: str = "INFO"
 
